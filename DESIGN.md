@@ -1,3 +1,5 @@
+**Live demo:** https://wesee-grounded-engine.onrender.com/docs
+(Render free tier — the first request after idle has a ~30–50s cold-start wake-up.)
 # DESIGN.md — WeSee Grounded Answer Engine
 
 ## Overview
