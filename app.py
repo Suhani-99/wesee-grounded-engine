@@ -12,6 +12,8 @@ Then POST to:           http://localhost:8000/ask
 from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
+import os
+
 
 from engine import build_index, answer
 
@@ -63,4 +65,7 @@ def health():
 # WHY here: lets the whole app launch with 'python app.py' — one command, as
 # the brief requires. uvicorn is the ASGI server that actually runs FastAPI.
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Use the host's provided port if present (deploy platforms set $PORT),
+    # else default to 8000 for local runs.
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
