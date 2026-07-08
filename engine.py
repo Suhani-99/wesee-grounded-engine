@@ -1,7 +1,7 @@
 """
 engine.py — the core of the Grounded Answer Engine.
-Stages: (1) load+chunk  (2) embed  (3) retrieve.
-Grounded generation (stage 4) comes next in its own section.
+Stages: (1) load+chunk  (2) embed  (3) retrieve  (4) grounded generation.
+Plus an exact-match answer cache in front of stage 4.
 """
 
 import os
@@ -103,11 +103,11 @@ def retrieve(question, index, k=5):
     """
     Return the top-k chunks most relevant to the question.
 
-    WHY: we feed only these few chunks to the LLM (not all 39) — the core RAG
-         move. top-k (not top-1) means the correct chunk only needs to be in
-         the shortlist, not ranked #1. <-- Q&A: retrieval is pure MATH; no LLM
-         is involved in FINDING chunks, so injected text is retrieved as data,
-         never executed as a command.
+    WHY: we feed only these few chunks to the LLM (not all of them) — the core
+         RAG move. top-k (not top-1) means the correct chunk only needs to be
+         in the shortlist, not ranked #1. <-- Q&A: retrieval is pure MATH; no
+         LLM is involved in FINDING chunks, so injected text is retrieved as
+         data, never executed as a command.
     """
     q_vector = embed_texts([question])[0]
 
@@ -128,23 +128,6 @@ def retrieve(question, index, k=5):
         })
     return results
 
-
-# --- self-test ---
-if __name__ == "__main__":
-    index = build_index()
-    print(f"Indexed {len(index)} chunks.\n")
-
-    test_questions = [
-        "How much does the Growth plan cost per month?",
-        "What HTTP status is returned when the rate limit is hit?",
-        "What are the two states a draft moves through before publishing?",
-    ]
-
-    for q in test_questions:
-        print(f"Q: {q}")
-        for h in retrieve(q, index, k=5):
-            print(f"   [{h['score']:.3f}] ({h['doc']}) {h['text'][:70]}...")
-        print()
 
 # ============================================================
 # STAGE 4 — GROUNDED GENERATION + CITATION VERIFICATION
@@ -168,7 +151,30 @@ CHAT_MODEL = "llama-3.3-70b-versatile"
 MIN_RETRIEVAL_SCORE = 0.55
 
 
+# A simple in-memory answer cache: maps an exact question -> its result.
+# WHY: identical repeat questions skip retrieval AND the LLM call entirely,
+# returning instantly — cutting latency and cost. <-- Q&A: this is an EXACT-
+# match cache. The honest upgrade is a SEMANTIC cache (embed the question so
+# reworded versions also hit) plus Redis to share it across servers. This dict
+# demonstrates the concept; Redis is the production, multi-server version.
+_answer_cache = {}
+
+
 def answer(question, index, k=5):
+    """
+    Cached wrapper around the grounded-answer logic. Exact-match cache: a
+    repeated identical question returns instantly, skipping retrieval and the
+    LLM call. On a cache miss it runs the full pipeline and stores the result.
+    Public name stays `answer` so app.py and eval.py need no changes.
+    """
+    if question in _answer_cache:                    # cache HIT -> instant
+        return _answer_cache[question]
+    result = _answer_uncached(question, index, k=k)  # cache MISS -> compute
+    _answer_cache[question] = result                 # store for next time
+    return result
+
+
+def _answer_uncached(question, index, k=5):
     """
     Produce a grounded, cited answer — or an honest refusal.
 
@@ -282,6 +288,8 @@ def answer(question, index, k=5):
 
 
 # --- self-test: run the three eval categories by hand ---
+# NOTE: only runs when you execute `python engine.py` directly — a dev sanity
+# check, NOT the real evaluation. The real scoring is eval.py.
 if __name__ == "__main__":
     index = build_index()
     print(f"Indexed {len(index)} chunks.\n")
